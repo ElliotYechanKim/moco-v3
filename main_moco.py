@@ -41,7 +41,15 @@ torchvision_model_names = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
 
-model_names = ['vit_small', 'vit_base', 'vit_conv_small', 'vit_conv_base'] + torchvision_model_names
+model_names = [
+    'vit_small', 
+    'vit_base',
+    'vit_large',
+    'vit_huge',
+    'vit_conv_small',
+    'vit_conv_base',
+    'vit_base_77',
+    'vit_large_77'] + torchvision_model_names
 
 parser = argparse.ArgumentParser(description='MoCo ImageNet Pre-Training')
 parser.add_argument('data', metavar='DIR',
@@ -116,6 +124,7 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
                     help='number of warmup epochs')
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
+parser.add_argument('--accum', type=int, default=1)
 
 
 def main():
@@ -294,6 +303,8 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         train_sampler = None
 
+    args.batch_size = int(args.batch_size / args.accum)
+    print(f"Adjusted Batch size : {args.batch_size}")
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
@@ -324,7 +335,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
     learning_rates = AverageMeter('LR', ':.4e')
     losses = AverageMeter('Loss', ':.4e')
     progress = ProgressMeter(
-        len(train_loader),
+        (len(train_loader) // args.accum),
         [batch_time, data_time, learning_rates, losses],
         prefix="Epoch: [{}]".format(epoch))
 
@@ -332,17 +343,19 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
     model.train()
 
     end = time.time()
-    iters_per_epoch = len(train_loader)
+    iters_per_epoch = len(train_loader) // args.accum
     moco_m = args.moco_m
+    niter = 0
     for i, (images, _) in enumerate(train_loader):
-        # measure data loading time
-        data_time.update(time.time() - end)
+        if (i + 1) % args.accum == 0 or ((i + 1) == len(train_loader)):
+            # measure data loading time
+            data_time.update(time.time() - end)
 
-        # adjust learning rate and momentum coefficient per iteration
-        lr = adjust_learning_rate(optimizer, epoch + i / iters_per_epoch, args)
-        learning_rates.update(lr)
-        if args.moco_m_cos:
-            moco_m = adjust_moco_momentum(epoch + i / iters_per_epoch, args)
+            # adjust learning rate and momentum coefficient per iteration
+            lr = adjust_learning_rate(optimizer, epoch + niter / iters_per_epoch, args)
+            learning_rates.update(lr)
+            if args.moco_m_cos:
+                moco_m = adjust_moco_momentum(epoch + niter / iters_per_epoch, args)
 
         if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
@@ -351,23 +364,25 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
         # compute output
         with torch.cuda.amp.autocast(True):
             loss = model(images[0], images[1], moco_m)
-
-        losses.update(loss.item(), images[0].size(0))
-        if args.rank == 0:
-            summary_writer.add_scalar("loss", loss.item(), epoch * iters_per_epoch + i)
+        loss = loss / args.accum
 
         # compute gradient and do SGD step
-        optimizer.zero_grad()
         scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+        if (i + 1) % args.accum == 0 or ((i + 1) == len(train_loader)):
+            losses.update(loss.item() * args.accum, images[0].size(0))
+            if args.rank == 0:
+                summary_writer.add_scalar("loss", loss.item() * args.accum, epoch * iters_per_epoch + niter)
+            scaler.step(optimizer)
+            optimizer.zero_grad()
+            scaler.update()
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-        if i % args.print_freq == 0:
-            progress.display(i)
+            if niter % args.print_freq == 0:
+                progress.display(niter)
+            niter += 1
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):

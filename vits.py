@@ -17,8 +17,12 @@ from timm.models.layers import PatchEmbed
 __all__ = [
     'vit_small', 
     'vit_base',
+    'vit_large',
+    'vit_huge',
     'vit_conv_small',
     'vit_conv_base',
+    'vit_base_77',
+    'vit_large_77'
 ]
 
 
@@ -123,6 +127,34 @@ def vit_base(**kwargs):
     model = VisionTransformerMoCo(
         patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    return model
+
+def vit_large(**kwargs):
+    model = VisionTransformerMoCo(
+        patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    return model
+
+def vit_huge(**kwargs):
+    model = VisionTransformerMoCo(
+        patch_size=16, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    return model
+
+def vit_base_77(**kwargs):
+    model = VisionTransformerMoCo(
+        patch_size=7, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.BatchNorm1d, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    return model
+
+def vit_large_77(**kwargs):
+    model = VisionTransformerMoCo(
+        patch_size=7, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.BatchNorm1d, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
     return model
 
